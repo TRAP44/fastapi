@@ -1,57 +1,84 @@
 from sqlalchemy.future import select
+from sqlalchemy.orm import selectinload
 from sqlalchemy import delete, update, asc, desc
-from .models import User
+from .models import Product, Order, OrderItem
 from .connect import async_session
 
 
-async def create_user(name: str, email: str):
+async def create_order(user_id: int, product_items: list[dict]):
     async with async_session() as session:
-        user = User(name=name, email=email)
-        session.add(user)
+        order = Order(user_id=user_id)
+        session.add(order)
+        await session.flush()
+
+        for item in product_items:
+            session.add(OrderItem(
+                order_id=order.id,
+                product_id=item['product_id'],
+                quantity=item.get('quantity', 1)
+            ))
+
         await session.commit()
-        await session.refresh(user)
+        await session.refresh(order)
 
-        return user
+        return order
+    
 
-
-async def get_all_users(order_by = "id", direction = "asc"):
+async def get_order_by_id(order_id: int):
     async with async_session() as session:
-        column = getattr(User, order_by, User.id)
-        direction_fn = asc if direction == "asc" else desc
-
-        result = await session.execute(select(User).order_by(direction_fn(column)))
-        return result.scalars().all()
-
-
-async def get_user_by_id(user_id: int):
-    async with async_session() as session:
-        result = await session.execute(select(User).where(User.id == user_id))
+        result = await session.execute(select(Order).where(Order.id == order_id).options(
+            selectinload(Order.items).selectinload(OrderItem.product)
+        ))
         return result.scalar_one_or_none()
     
 
-async def update_user(user_id: int, name: str, email: str):
+async def get_all_order():
     async with async_session() as session:
-        result = await session.execute(select(User).where(User.id == user_id))
-        user = result.scalar_one_or_none()
-        if user is None:
-            return None
-        
-        user.name = name
-        user.email = email
-        await session.commit()
-        await session.refresh(user)
-
-        return user
+        result = await session.execute(select(Order).options(selectinload(Order.items).selectinload(OrderItem.product)).order_by(Order.created_at.desc()))
+        return result.scalars().all()
     
 
-async def delete_user(user_id: int):
+async def create_product(title: str, desc: str, price: float, image_url: str):
     async with async_session() as session:
-        result = await session.execute(select(User).where(User.id == user_id))
-        user = result.scalar_one_or_none()
-        if user is None:
+        product = Product(title=title, desc=desc, price=price, image_url=image_url)
+        session.add(product)
+        await session.commit()
+        await session.refresh(product)
+
+        return product
+
+
+async def get_all_product(order_by = "id", direction = "asc"):
+    async with async_session() as session:
+        column = getattr(Product, order_by, Product.id)
+        direction_fn = asc if direction == "asc" else desc
+
+        result = await session.execute(select(Product).order_by(direction_fn(column)))
+        return result.scalars().all()
+
+
+async def get_product_by_id(product_id: int):
+    async with async_session() as session:
+        result = await session.execute(select(Product).where(Product.id == product_id))
+        return result.scalar_one_or_none()
+    
+
+async def get_product_by_title(title: str):
+    async with async_session() as session:
+        result = await session.execute(select(Product).where(Product.title.ilike(f"%{title}%")))
+        return result.scalars().all()
+    
+
+async def update_order_status(order_id: int, status: str = "done"):
+    async with async_session() as session:
+        result = await session.excecute(select(Order).where(Order.id == order_id))
+        order = result.scalar_one_or_none()
+        if order is None:
             return None
         
-        await session.delete(user)
-        await session.commit()
+        order.status = status
 
-        return True
+        await session.commit()
+        await session.refresh(order)
+
+        return order
